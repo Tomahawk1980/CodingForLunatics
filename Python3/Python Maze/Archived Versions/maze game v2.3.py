@@ -6,33 +6,23 @@ import json
 import os
 import time
 
-
 # ============================================================
 # PYTHON MAZE
 # Version 2.3
 # (c) 2026 Stuart MacIntosh
 #
 # V2.3
-# - Reworked jump system
-# - Space starts a two-square jump
-# - Arrow keys determine jump direction
-# - Proper 3D jump arc
-# - Smooth movement retained
-# - Reduced draw distance
-# - Softer/lower movement sound
-# - Animated water
-# - Animated sand
-# - Animated pits
-# - Correct score handling
-# - Give Up records current score
-# - Death returns player to level start
-# - Three lives
+# - Lower 3D wall height
+# - Walls rise from the playable floor plane
+# - Player correctly positioned on floor plane
+# - Improved obstacle visibility
+# - Reliable held-key movement
+# - Space is now a persistent jump request
+# - Two-square jump with visible 3D arc
+# - Obstacles only placed where a valid jump exists
+# - Improved obstacle placement around intersections
+# - Close draw distance retained
 #
-# ============================================================
-
-
-# ============================================================
-# INITIALISATION
 # ============================================================
 
 pygame.init()
@@ -96,6 +86,8 @@ SAND_DARK = (125, 95, 45)
 PIT = (18, 18, 23)
 PIT_RIM = (45, 45, 50)
 
+SHADOW = (0, 0, 0)
+
 
 # ============================================================
 # FONTS
@@ -113,39 +105,36 @@ FONT_TITLE = pygame.font.Font(None, 110)
 # ============================================================
 
 DIFFICULTIES = {
-
     "Easy": {
         "maze": 17,
         "obstacles": 3,
         "min_solution": 20,
-        "lives": 3
+        "lives": 3,
     },
 
     "Medium": {
         "maze": 21,
         "obstacles": 5,
         "min_solution": 35,
-        "lives": 3
+        "lives": 3,
     },
 
     "Hard": {
         "maze": 25,
         "obstacles": 8,
         "min_solution": 55,
-        "lives": 3
+        "lives": 3,
     },
 
     "Extreme": {
         "maze": 29,
         "obstacles": 12,
         "min_solution": 80,
-        "lives": 3
+        "lives": 3,
     }
 }
 
-difficulty_names = list(
-    DIFFICULTIES.keys()
-)
+difficulty_names = list(DIFFICULTIES.keys())
 
 difficulty_index = 1
 
@@ -166,18 +155,11 @@ def load_scores():
 
         if os.path.exists(SCORE_FILE):
 
-            with open(
-                SCORE_FILE,
-                "r"
-            ) as f:
+            with open(SCORE_FILE, "r") as f:
 
                 data = json.load(f)
 
-                if isinstance(
-                    data,
-                    list
-                ):
-
+                if isinstance(data, list):
                     return data
 
     except Exception:
@@ -190,16 +172,8 @@ def save_scores(scores):
 
     try:
 
-        with open(
-            SCORE_FILE,
-            "w"
-        ) as f:
-
-            json.dump(
-                scores,
-                f,
-                indent=2
-            )
+        with open(SCORE_FILE, "w") as f:
+            json.dump(scores, f, indent=2)
 
     except Exception:
         pass
@@ -209,14 +183,14 @@ high_scores = load_scores()
 
 
 # ============================================================
-# SOUNDS
+# PROCEDURAL SOUNDS
 # ============================================================
 
 def make_noise_sound(
     duration=0.08,
-    volume=0.035,
-    low_freq=45,
-    high_freq=110
+    volume=0.08,
+    low_freq=80,
+    high_freq=250
 ):
 
     try:
@@ -236,8 +210,8 @@ def make_noise_sound(
             progress = i / samples
 
             envelope = (
-                1.0 - progress
-            ) ** 2
+                (1.0 - progress) ** 2
+            )
 
             noise = random.uniform(
                 -1.0,
@@ -248,44 +222,43 @@ def make_noise_sound(
                 low_freq
                 +
                 (
-                    high_freq -
-                    low_freq
-                ) * progress
+                    high_freq
+                    - low_freq
+                )
+                * progress
             )
 
             phase += (
-                2 *
-                math.pi *
-                freq /
-                sample_rate
+                2
+                * math.pi
+                * freq
+                / sample_rate
             )
 
-            tone = math.sin(
-                phase
-            )
+            tone = math.sin(phase)
 
             value = (
-                noise * 0.60 +
-                tone * 0.40
+                noise * 0.55
+                +
+                tone * 0.45
             )
 
             value *= envelope
             value *= volume
 
-            sample = (
-                int(value * 127)
-                + 128
-            )
+            sample = int(
+                value * 127
+            ) + 128
 
-            buffer.append(
-                max(
-                    0,
-                    min(
-                        255,
-                        sample
-                    )
+            sample = max(
+                0,
+                min(
+                    255,
+                    sample
                 )
             )
+
+            buffer.append(sample)
 
         return pygame.mixer.Sound(
             buffer=bytes(buffer)
@@ -299,7 +272,8 @@ def make_noise_sound(
 def make_tone(
     frequency,
     duration,
-    volume=0.10
+    volume=0.12,
+    decay=True
 ):
 
     try:
@@ -319,23 +293,24 @@ def make_tone(
             progress = i / samples
 
             envelope = (
-                1.0 - progress
+                (1.0 - progress)
+                if decay
+                else 1.0
             )
 
             value = math.sin(
-                2 *
-                math.pi *
-                frequency *
-                t
+                2
+                * math.pi
+                * frequency
+                * t
             )
 
             value *= envelope
             value *= volume
 
-            sample = (
-                int(value * 127)
-                + 128
-            )
+            sample = int(
+                value * 127
+            ) + 128
 
             buffer.append(
                 max(
@@ -356,24 +331,23 @@ def make_tone(
         return None
 
 
-# Very quiet low-frequency footstep/crunch.
 move_sound = make_noise_sound(
-    duration=0.085,
-    volume=0.028,
-    low_freq=42,
-    high_freq=105
+    duration=0.075,
+    volume=0.035,
+    low_freq=45,
+    high_freq=120
 )
 
 jump_sound = make_tone(
     175,
     0.18,
-    0.08
+    0.09
 )
 
 death_sound = make_tone(
-    70,
+    75,
     0.42,
-    0.14
+    0.16
 )
 
 start_sound = make_tone(
@@ -391,12 +365,14 @@ exit_sound = make_tone(
 
 def play_sound(sound):
 
-    if sound is not None:
+    if sound is None:
+        return
 
-        try:
-            sound.play()
-        except Exception:
-            pass
+    try:
+        sound.play()
+
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -472,6 +448,7 @@ def generate_maze(size):
                 )
 
                 carved = True
+
                 break
 
         if not carved:
@@ -487,6 +464,10 @@ def generate_maze(size):
 
     return maze
 
+
+# ============================================================
+# FLOOR
+# ============================================================
 
 def is_floor(
     maze,
@@ -508,7 +489,7 @@ def is_floor(
 
 def get_floor_cells(maze):
 
-    result = []
+    cells = []
 
     for y in range(
         len(maze)
@@ -520,11 +501,11 @@ def get_floor_cells(maze):
 
             if maze[y][x] == 0:
 
-                result.append(
+                cells.append(
                     (x, y)
                 )
 
-    return result
+    return cells
 
 
 # ============================================================
@@ -553,9 +534,7 @@ def find_path(
 
             while current is not None:
 
-                path.append(
-                    current
-                )
+                path.append(current)
 
                 current = came_from[
                     current
@@ -591,6 +570,7 @@ def find_path(
             if cell not in came_from:
 
                 came_from[cell] = current
+
                 queue.append(cell)
 
     return None
@@ -644,10 +624,7 @@ def choose_exit(maze):
         return max(
             cells,
             key=lambda c:
-                distance(
-                    start,
-                    c
-                )
+                distance(start, c)
         )
 
     candidates.sort(
@@ -679,7 +656,7 @@ OBSTACLE_TYPES = [
 ]
 
 
-def valid_jump_cells(
+def get_jump_destination(
     maze,
     x,
     y,
@@ -687,25 +664,119 @@ def valid_jump_cells(
     dy
 ):
 
+    """
+    Returns:
+
+        obstacle square
+        landing square
+
+    for a two-square jump.
+
+    The player moves over exactly one square
+    and lands on the second square.
+    """
+
     obstacle_x = x + dx
     obstacle_y = y + dy
 
     landing_x = x + dx * 2
     landing_y = y + dy * 2
 
+    if not is_floor(
+        maze,
+        obstacle_x,
+        obstacle_y
+    ):
+        return None
+
+    if not is_floor(
+        maze,
+        landing_x,
+        landing_y
+    ):
+        return None
+
     return (
-        is_floor(
-            maze,
-            obstacle_x,
-            obstacle_y
-        )
-        and
-        is_floor(
-            maze,
-            landing_x,
-            landing_y
-        )
+        (obstacle_x, obstacle_y),
+        (landing_x, landing_y)
     )
+
+
+def obstacle_has_jump_route(
+    maze,
+    obstacle,
+    exit_pos
+):
+
+    """
+    An obstacle must have at least one genuine
+    two-square jump route.
+
+    It must also not sit immediately beside
+    the exit in a way that makes the exit awkward.
+    """
+
+    ox, oy = obstacle
+
+    directions = [
+        (1, 0),
+        (-1, 0),
+        (0, 1),
+        (0, -1)
+    ]
+
+    valid_routes = 0
+
+    for dx, dy in directions:
+
+        source_x = ox - dx
+        source_y = oy - dy
+
+        result = get_jump_destination(
+            maze,
+            source_x,
+            source_y,
+            dx,
+            dy
+        )
+
+        if result is None:
+            continue
+
+        _, landing = result
+
+        if landing == exit_pos:
+            continue
+
+        valid_routes += 1
+
+    return valid_routes > 0
+
+
+def count_open_neighbours(
+    maze,
+    x,
+    y
+):
+
+    count = 0
+
+    for dx, dy in [
+        (1, 0),
+        (-1, 0),
+        (0, 1),
+        (0, -1)
+    ]:
+
+        if is_floor(
+            maze,
+            x + dx,
+            y + dy
+        ):
+
+            count += 1
+
+    return count
 
 
 def generate_obstacles(
@@ -714,6 +785,20 @@ def generate_obstacles(
     exit_pos,
     count
 ):
+
+    """
+    Generate obstacles only on floor cells where:
+
+    1. The player can actually jump over them.
+    2. There is a valid landing square.
+    3. The obstacle isn't immediately around the start.
+    4. The obstacle isn't immediately around the exit.
+    5. Obstacles aren't clustered.
+    6. Obstacles don't completely block a junction.
+
+    This prevents the player getting into situations
+    where an obstacle exists but cannot actually be jumped.
+    """
 
     obstacles = {}
 
@@ -728,54 +813,52 @@ def generate_obstacles(
         if len(obstacles) >= count:
             break
 
-        if (
+        current = (
             x,
             y
-        ) in (
-            start,
-            exit_pos
-        ):
+        )
+
+        if current == start:
             continue
 
+        if current == exit_pos:
+            continue
+
+        # Keep hazards away from the beginning.
         if distance(
-            (x, y),
+            current,
             start
         ) < 5:
             continue
 
-        # Make sure there is at least one
-        # valid jump route across this obstacle.
-        possible = False
+        # Keep the exit readable.
+        if distance(
+            current,
+            exit_pos
+        ) < 3:
+            continue
 
-        for dx, dy in [
-            (1, 0),
-            (-1, 0),
-            (0, 1),
-            (0, -1)
-        ]:
+        # Don't put hazards in an isolated dead-end
+        # where the player could be trapped.
+        open_neighbours = count_open_neighbours(
+            maze,
+            x,
+            y
+        )
 
-            # The player would start one square
-            # before the obstacle and land one
-            # square beyond it.
-            if valid_jump_cells(
-                maze,
-                x - dx,
-                y - dy,
-                dx,
-                dy
-            ):
+        if open_neighbours < 2:
+            continue
 
-                landing = (
-                    x + dx,
-                    y + dy
-                )
+        # Don't make an intersection itself hazardous.
+        if open_neighbours >= 3:
+            if random.random() < 0.75:
+                continue
 
-                if landing != exit_pos:
-
-                    possible = True
-                    break
-
-        if not possible:
+        if not obstacle_has_jump_route(
+            maze,
+            current,
+            exit_pos
+        ):
             continue
 
         too_close = False
@@ -783,7 +866,7 @@ def generate_obstacles(
         for ox, oy in obstacles:
 
             if distance(
-                (x, y),
+                current,
                 (ox, oy)
             ) <= 2:
 
@@ -793,9 +876,7 @@ def generate_obstacles(
         if too_close:
             continue
 
-        obstacles[
-            (x, y)
-        ] = random.choice(
+        obstacles[current] = random.choice(
             OBSTACLE_TYPES
         )
 
@@ -816,7 +897,7 @@ def generate_level():
 
     size = settings["maze"]
 
-    for _ in range(40):
+    for _ in range(50):
 
         maze = generate_maze(
             size
@@ -837,9 +918,10 @@ def generate_level():
         if not path:
             continue
 
-        if len(path) < settings[
-            "min_solution"
-        ]:
+        if (
+            len(path)
+            < settings["min_solution"]
+        ):
             continue
 
         obstacles = generate_obstacles(
@@ -857,7 +939,9 @@ def generate_level():
             path
         )
 
-    maze = generate_maze(size)
+    maze = generate_maze(
+        size
+    )
 
     start = (1, 1)
 
@@ -891,9 +975,11 @@ def generate_level():
 # 3D PROJECTION
 # ============================================================
 
-TILE_W = 64
-TILE_H = 32
-WALL_HEIGHT = 45
+TILE_W = 72
+TILE_H = 36
+
+# Reduced significantly from V2.2.
+WALL_HEIGHT = 28
 
 
 def project(
@@ -907,24 +993,32 @@ def project(
         WIDTH // 2
         +
         (
-            x -
-            y -
-            camera_x +
+            x
+            -
+            y
+            -
+            camera_x
+            +
             camera_y
-        ) *
-        TILE_W / 2
+        )
+        * TILE_W
+        / 2
     )
 
     sy = (
         HEIGHT // 2
         +
         (
-            x +
-            y -
-            camera_x -
+            x
+            +
+            y
+            -
+            camera_x
+            -
             camera_y
-        ) *
-        TILE_H / 2
+        )
+        * TILE_H
+        / 2
     )
 
     return (
@@ -966,7 +1060,8 @@ def draw_floor_tile(
     x,
     y,
     camera_x,
-    camera_y
+    camera_y,
+    colour=FLOOR
 ):
 
     poly = tile_polygon(
@@ -978,7 +1073,7 @@ def draw_floor_tile(
 
     pygame.draw.polygon(
         screen,
-        FLOOR,
+        colour,
         poly
     )
 
@@ -1001,86 +1096,118 @@ def draw_wall(
     camera_y
 ):
 
-    top = tile_polygon(
+    """
+    V2.3 wall geometry.
+
+    The floor tile is the BASE of the wall.
+    The wall rises upwards from that plane.
+
+    This is deliberately different from V2.2's
+    geometry, which visually pushed too much of the
+    wall into the player's plane.
+    """
+
+    floor_poly = tile_polygon(
         x,
         y,
         camera_x,
         camera_y
     )
 
-    left = top[3]
-    right = top[1]
-    front = top[2]
+    top_left = floor_poly[3]
+    top_right = floor_poly[1]
+    top_front = floor_poly[2]
+    top_back = floor_poly[0]
 
-    bottom_left = (
-        left[0],
-        left[1] + WALL_HEIGHT
+    # Wall top is ABOVE the floor plane.
+    wall_top_offset = WALL_HEIGHT
+
+    upper_left = (
+        top_left[0],
+        top_left[1] - wall_top_offset
     )
 
-    bottom_right = (
-        right[0],
-        right[1] + WALL_HEIGHT
+    upper_right = (
+        top_right[0],
+        top_right[1] - wall_top_offset
     )
 
-    bottom_front = (
-        front[0],
-        front[1] + WALL_HEIGHT
+    upper_front = (
+        top_front[0],
+        top_front[1] - wall_top_offset
     )
 
-    # Left/front face.
+    upper_back = (
+        top_back[0],
+        top_back[1] - wall_top_offset
+    )
+
+    # Front-left face.
     pygame.draw.polygon(
         screen,
         WALL_SIDE,
         [
-            left,
-            front,
-            bottom_front,
-            bottom_left
+            upper_left,
+            upper_front,
+            top_front,
+            top_left
         ]
     )
 
-    # Right/front face.
+    # Front-right face.
     pygame.draw.polygon(
         screen,
         WALL_FRONT,
         [
-            front,
-            right,
-            bottom_right,
-            bottom_front
+            upper_front,
+            upper_right,
+            top_right,
+            top_front
         ]
     )
 
-    # Top.
+    # Complete top surface.
     pygame.draw.polygon(
         screen,
         WALL_TOP,
-        top
+        [
+            upper_back,
+            upper_right,
+            upper_front,
+            upper_left
+        ]
     )
 
-    # Deliberately redraw the shared edges.
-    # This prevents the missing-corner appearance.
+    # Subtle edges.
     pygame.draw.line(
         screen,
         (100, 110, 125),
-        top[0],
-        top[1],
+        upper_back,
+        upper_right,
         1
     )
 
     pygame.draw.line(
         screen,
         (100, 110, 125),
-        top[0],
-        top[3],
+        upper_back,
+        upper_left,
         1
     )
 
     pygame.draw.line(
         screen,
-        (65, 75, 88),
-        top[2],
-        bottom_front,
+        (80, 90, 105),
+        upper_front,
+        upper_right,
+        1
+    )
+
+    pygame.draw.line(
+        screen,
+        (80, 90, 105),
+        upper_front,
+        upper_left,
         1
     )
 
@@ -1088,6 +1215,39 @@ def draw_wall(
 # ============================================================
 # OBSTACLES
 # ============================================================
+
+def obstacle_inner_polygon(
+    poly,
+    scale_x,
+    scale_y
+):
+
+    cx = sum(
+        p[0] for p in poly
+    ) / 4
+
+    cy = sum(
+        p[1] for p in poly
+    ) / 4
+
+    return [
+        (
+            int(
+                cx
+                +
+                (px - cx)
+                * scale_x
+            ),
+            int(
+                cy
+                +
+                (py - cy)
+                * scale_y
+            )
+        )
+        for px, py in poly
+    ]
+
 
 def draw_water(
     x,
@@ -1104,32 +1264,18 @@ def draw_water(
         camera_y
     )
 
+    # Recessed dark edge.
     pygame.draw.polygon(
         screen,
         WATER_DARK,
         poly
     )
 
-    cx, cy = project(
-        x,
-        y,
-        camera_x,
-        camera_y
+    inner = obstacle_inner_polygon(
+        poly,
+        0.86,
+        0.72
     )
-
-    inner = [
-        (
-            int(
-                cx +
-                (px - cx) * 0.84
-            ),
-            int(
-                cy +
-                (py - cy) * 0.70
-            )
-        )
-        for px, py in poly
-    ]
 
     pygame.draw.polygon(
         screen,
@@ -1138,10 +1284,17 @@ def draw_water(
     )
 
     # Animated ripples.
+    cx, cy = project(
+        x,
+        y,
+        camera_x,
+        camera_y
+    )
+
     phase = (
         animation_time * 2.0
         +
-        x * 0.8
+        x * 0.7
         +
         y * 0.4
     )
@@ -1150,13 +1303,19 @@ def draw_water(
 
         pulse = (
             math.sin(
-                phase +
+                phase
+                +
                 ring * math.pi
-            ) + 1
+            )
+            + 1
         ) / 2
 
-        width = int(
-            18 + pulse * 14
+        width = (
+            18
+            +
+            int(
+                pulse * 10
+            )
         )
 
         pygame.draw.ellipse(
@@ -1164,12 +1323,20 @@ def draw_water(
             WATER_LIGHT,
             (
                 cx - width // 2,
-                cy - 4 + ring * 7,
+                cy - 2 + ring * 7,
                 width,
-                8
+                5
             ),
             1
         )
+
+    pygame.draw.line(
+        screen,
+        WATER_LIGHT,
+        inner[0],
+        inner[1],
+        2
+    )
 
 
 def draw_sand(
@@ -1193,26 +1360,11 @@ def draw_sand(
         poly
     )
 
-    cx, cy = project(
-        x,
-        y,
-        camera_x,
-        camera_y
+    inner = obstacle_inner_polygon(
+        poly,
+        0.86,
+        0.72
     )
-
-    inner = [
-        (
-            int(
-                cx +
-                (px - cx) * 0.86
-            ),
-            int(
-                cy +
-                (py - cy) * 0.72
-            )
-        )
-        for px, py in poly
-    ]
 
     pygame.draw.polygon(
         screen,
@@ -1220,17 +1372,20 @@ def draw_sand(
         inner
     )
 
-    # Stable but gently animated sand.
-    random.seed(
-        x * 1009 +
-        y * 313
+    cx, cy = project(
+        x,
+        y,
+        camera_x,
+        camera_y
     )
 
-    drift = (
-        animation_time * 4
-    ) % 3
+    random.seed(
+        x * 1000
+        +
+        y * 37
+    )
 
-    for i in range(9):
+    for _ in range(12):
 
         px = random.uniform(
             -22,
@@ -1246,14 +1401,8 @@ def draw_sand(
             screen,
             SAND_LIGHT,
             (
-                int(
-                    cx +
-                    px +
-                    drift
-                ),
-                int(
-                    cy + py
-                )
+                int(cx + px),
+                int(cy + py)
             ),
             random.choice(
                 [1, 1, 2]
@@ -1284,42 +1433,28 @@ def draw_pit(
         poly
     )
 
-    cx, cy = project(
-        x,
-        y,
-        camera_x,
-        camera_y
+    inner = obstacle_inner_polygon(
+        poly,
+        0.78,
+        0.60
     )
-
-    pulse = (
-        math.sin(
-            animation_time * 2
-        ) + 1
-    ) * 0.04
-
-    scale_x = 0.78 + pulse
-    scale_y = 0.60 + pulse
-
-    inner = [
-        (
-            int(
-                cx +
-                (px - cx) *
-                scale_x
-            ),
-            int(
-                cy +
-                (py - cy) *
-                scale_y
-            )
-        )
-        for px, py in poly
-    ]
 
     pygame.draw.polygon(
         screen,
         PIT,
         inner
+    )
+
+    inner2 = obstacle_inner_polygon(
+        poly,
+        0.52,
+        0.40
+    )
+
+    pygame.draw.polygon(
+        screen,
+        (5, 5, 8),
+        inner2
     )
 
 
@@ -1398,7 +1533,8 @@ def draw_exit(
     pulse = (
         math.sin(
             animation_time * 3
-        ) + 1
+        )
+        + 1
     ) * 2
 
     pygame.draw.ellipse(
@@ -1409,7 +1545,7 @@ def draw_exit(
                 cx - 15 - pulse
             ),
             int(
-                cy - 6
+                cy - 6 - pulse / 2
             ),
             int(
                 30 + pulse * 2
@@ -1431,10 +1567,18 @@ def draw_player(
     camera_x,
     camera_y,
     moving=False,
-    move_progress=0.0,
-    jump_height=0.0,
-    death_amount=0.0
+    move_progress=0,
+    jump_height=0,
+    death_amount=0,
+    facing=(0, 1)
 ):
+
+    """
+    Player is anchored to the projected floor point.
+
+    jump_height is 0..1 and is converted into vertical
+    screen displacement here.
+    """
 
     sx, sy = project(
         world_x,
@@ -1443,17 +1587,20 @@ def draw_player(
         camera_y
     )
 
-    # Shadow.
+    # --------------------------------------------------------
+    # Ground shadow
+    # --------------------------------------------------------
+
     shadow_scale = max(
-        0.25,
-        1.0 - jump_height * 0.65
+        0.35,
+        1.0 - jump_height * 0.55
     )
 
-    shadow_w = int(
-        22 * shadow_scale
+    shadow_width = int(
+        20 * shadow_scale
     )
 
-    shadow_h = int(
+    shadow_height = int(
         7 * shadow_scale
     )
 
@@ -1461,56 +1608,61 @@ def draw_player(
         screen,
         (5, 5, 7),
         (
-            sx - shadow_w,
-            sy - shadow_h // 2,
-            shadow_w * 2,
-            shadow_h
+            sx - shadow_width,
+            sy - shadow_height // 2,
+            shadow_width * 2,
+            shadow_height
         )
     )
 
-    # Walking animation.
+    # --------------------------------------------------------
+    # Walking animation
+    # --------------------------------------------------------
+
     if moving:
 
-        phase = (
-            move_progress *
-            math.pi *
-            2
+        walk_phase = (
+            move_progress
+            * math.pi
+            * 2
         )
 
     else:
 
-        phase = 0.0
+        walk_phase = 0.0
 
-    leg = (
-        math.sin(phase) * 5
-        if moving
-        else 0
-    )
-
-    arm = (
+    leg_offset = (
         math.sin(
-            phase + math.pi
-        ) * 4
+            walk_phase
+        )
+        * 5
         if moving
         else 0
     )
 
-    # Jump gives the character a little
-    # vertical squash/stretch.
-    squash = (
-        1.0 -
-        min(
-            0.10,
-            jump_height * 0.05
+    arm_offset = (
+        math.sin(
+            walk_phase
+            +
+            math.pi
         )
+        * 3
+        if moving
+        else 0
+    )
+
+    # --------------------------------------------------------
+    # Vertical player position
+    # --------------------------------------------------------
+
+    vertical_offset = int(
+        jump_height * 72
     )
 
     base_y = (
-        sy -
-        25 -
-        int(
-            jump_height * 70
-        )
+        sy
+        - 25
+        - vertical_offset
     )
 
     if death_amount > 0:
@@ -1519,16 +1671,19 @@ def draw_player(
             death_amount * 18
         )
 
-    # Legs.
+    # --------------------------------------------------------
+    # Legs
+    # --------------------------------------------------------
+
     pygame.draw.line(
         screen,
         GREEN_DARK,
         (
             sx - 5,
-            base_y + 17
+            base_y + 18
         ),
         (
-            sx - 5 + leg,
+            sx - 5 + leg_offset,
             base_y + 31
         ),
         4
@@ -1539,16 +1694,19 @@ def draw_player(
         GREEN_DARK,
         (
             sx + 5,
-            base_y + 17
+            base_y + 18
         ),
         (
-            sx + 5 - leg,
+            sx + 5 - leg_offset,
             base_y + 31
         ),
         4
     )
 
-    # Arms.
+    # --------------------------------------------------------
+    # Arms
+    # --------------------------------------------------------
+
     pygame.draw.line(
         screen,
         GREEN_DARK,
@@ -1557,10 +1715,10 @@ def draw_player(
             base_y + 2
         ),
         (
-            sx - 12 - arm,
+            sx - 11 + arm_offset,
             base_y + 14
         ),
-        4
+        3
     )
 
     pygame.draw.line(
@@ -1571,16 +1729,15 @@ def draw_player(
             base_y + 2
         ),
         (
-            sx + 12 + arm,
+            sx + 11 - arm_offset,
             base_y + 14
         ),
-        4
+        3
     )
 
-    # Body.
-    body_h = int(
-        24 * squash
-    )
+    # --------------------------------------------------------
+    # Body
+    # --------------------------------------------------------
 
     pygame.draw.ellipse(
         screen,
@@ -1589,11 +1746,14 @@ def draw_player(
             sx - 8,
             base_y - 3,
             16,
-            body_h
+            24
         )
     )
 
-    # Head.
+    # --------------------------------------------------------
+    # Head
+    # --------------------------------------------------------
+
     pygame.draw.circle(
         screen,
         GREEN,
@@ -1604,7 +1764,10 @@ def draw_player(
         9
     )
 
-    # Eyes.
+    # --------------------------------------------------------
+    # Eyes
+    # --------------------------------------------------------
+
     pygame.draw.circle(
         screen,
         BLACK,
@@ -1656,68 +1819,54 @@ def render_maze(
     move_progress,
     show_map,
     death_amount,
-    animation_time
+    animation_time,
+    facing=(0, 1)
 ):
 
     screen.fill(
         (12, 15, 20)
     )
 
-    camera_x, camera_y = (
-        calculate_camera(
-            player_x,
-            player_y
-        )
+    camera_x, camera_y = calculate_camera(
+        player_x,
+        player_y
     )
 
-    # Reduced draw distance.
-    draw_distance = 6
+    # Smaller visible area.
+    draw_distance = 7
 
     min_x = max(
         0,
-        int(
-            math.floor(
-                player_x -
-                draw_distance
-            )
-        )
+        int(player_x)
+        - draw_distance
     )
 
     max_x = min(
         len(maze[0]),
-        int(
-            math.ceil(
-                player_x +
-                draw_distance +
-                1
-            )
-        )
+        int(player_x)
+        + draw_distance
+        + 1
     )
 
     min_y = max(
         0,
-        int(
-            math.floor(
-                player_y -
-                draw_distance
-            )
-        )
+        int(player_y)
+        - draw_distance
     )
 
     max_y = min(
         len(maze),
-        int(
-            math.ceil(
-                player_y +
-                draw_distance +
-                1
-            )
-        )
+        int(player_y)
+        + draw_distance
+        + 1
     )
+
+    # --------------------------------------------------------
+    # DEPTH-SORTED RENDER LIST
+    # --------------------------------------------------------
 
     render_items = []
 
-    # Floors.
     for y in range(
         min_y,
         max_y
@@ -1740,7 +1889,6 @@ def render_maze(
                     )
                 )
 
-    # Obstacles.
     for (x, y), kind in obstacles.items():
 
         if (
@@ -1759,7 +1907,6 @@ def render_maze(
                 )
             )
 
-    # Exit.
     if (
         min_x <= exit_pos[0] < max_x
         and
@@ -1768,8 +1915,7 @@ def render_maze(
 
         render_items.append(
             (
-                exit_pos[0] +
-                exit_pos[1],
+                exit_pos[0] + exit_pos[1],
                 1,
                 exit_pos[0],
                 exit_pos[1],
@@ -1777,7 +1923,6 @@ def render_maze(
             )
         )
 
-    # Walls.
     for y in range(
         min_y,
         max_y
@@ -1806,6 +1951,10 @@ def render_maze(
             item[1]
         )
     )
+
+    # --------------------------------------------------------
+    # DRAW
+    # --------------------------------------------------------
 
     for _, _, x, y, kind in render_items:
 
@@ -1848,7 +1997,13 @@ def render_maze(
                 animation_time
             )
 
-    # Player always on top.
+    # --------------------------------------------------------
+    # PLAYER LAST
+    #
+    # This ensures the player is always visible and never
+    # gets swallowed by a nearby wall face.
+    # --------------------------------------------------------
+
     draw_player(
         player_x,
         player_y,
@@ -1857,7 +2012,8 @@ def render_maze(
         moving,
         move_progress,
         jump_height,
-        death_amount
+        death_amount,
+        facing
     )
 
     if show_map:
@@ -1886,13 +2042,13 @@ def draw_mini_map(
     size = 5
 
     map_width = (
-        len(maze[0]) *
-        size
+        len(maze[0])
+        * size
     )
 
     map_height = (
-        len(maze) *
-        size
+        len(maze)
+        * size
     )
 
     panel = pygame.Surface(
@@ -1915,12 +2071,21 @@ def draw_mini_map(
             len(maze[0])
         ):
 
-            colour = (
-                (35, 40, 48)
-                if maze[y][x] == 1
-                else
-                (190, 195, 200)
-            )
+            if maze[y][x] == 1:
+
+                colour = (
+                    35,
+                    40,
+                    48
+                )
+
+            else:
+
+                colour = (
+                    190,
+                    195,
+                    200
+                )
 
             pygame.draw.rect(
                 panel,
@@ -1933,7 +2098,7 @@ def draw_mini_map(
                 )
             )
 
-    for x, y in obstacles:
+    for (x, y), kind in obstacles.items():
 
         pygame.draw.rect(
             panel,
@@ -1971,9 +2136,7 @@ def draw_mini_map(
     screen.blit(
         panel,
         (
-            WIDTH -
-            map_width -
-            40,
+            WIDTH - map_width - 40,
             20
         )
     )
@@ -2049,62 +2212,6 @@ def draw_hud(
 
 
 # ============================================================
-# GIVE UP BUTTON
-# ============================================================
-
-def get_give_up_rect():
-
-    return pygame.Rect(
-        WIDTH - 180,
-        HEIGHT - 60,
-        150,
-        40
-    )
-
-
-def draw_give_up_button():
-
-    rect = get_give_up_rect()
-
-    over = rect.collidepoint(
-        pygame.mouse.get_pos()
-    )
-
-    pygame.draw.rect(
-        screen,
-        (
-            (80, 40, 45)
-            if over
-            else
-            (55, 30, 35)
-        ),
-        rect,
-        border_radius=8
-    )
-
-    pygame.draw.rect(
-        screen,
-        RED,
-        rect,
-        1,
-        border_radius=8
-    )
-
-    text = FONT_SMALL.render(
-        "GIVE UP",
-        True,
-        WHITE
-    )
-
-    screen.blit(
-        text,
-        text.get_rect(
-            center=rect.center
-        )
-    )
-
-
-# ============================================================
 # TITLE BACKGROUND
 # ============================================================
 
@@ -2119,8 +2226,12 @@ def draw_title_background(
     grid = 80
 
     offset = int(
-        animation_time * 15
-    ) % grid
+        (
+            animation_time
+            * 15
+        )
+        % grid
+    )
 
     for x in range(
         -grid,
@@ -2171,14 +2282,14 @@ def title_screen():
 
     global difficulty_index
 
-    start_time = time.time()
+    animation_start = time.time()
 
     while True:
 
         now = time.time()
 
         draw_title_background(
-            now - start_time
+            now - animation_start
         )
 
         hue = (
@@ -2263,27 +2374,32 @@ def title_screen():
         for i, (
             text,
             action
-        ) in enumerate(buttons):
+        ) in enumerate(
+            buttons
+        ):
 
             rect = pygame.Rect(
                 WIDTH // 2 - 230,
-                start_y + i * 78,
+                start_y
+                + i * 78,
                 460,
                 58
             )
 
-            over = rect.collidepoint(
+            mouse_over = rect.collidepoint(
                 pygame.mouse.get_pos()
+            )
+
+            colour = (
+                (50, 85, 115)
+                if mouse_over
+                else
+                (30, 48, 65)
             )
 
             pygame.draw.rect(
                 screen,
-                (
-                    (50, 85, 115)
-                    if over
-                    else
-                    (30, 48, 65)
-                ),
+                colour,
                 rect,
                 border_radius=10
             )
@@ -2296,15 +2412,15 @@ def title_screen():
                 border_radius=10
             )
 
-            surface = FONT.render(
+            text_surface = FONT.render(
                 text,
                 True,
                 WHITE
             )
 
             screen.blit(
-                surface,
-                surface.get_rect(
+                text_surface,
+                text_surface.get_rect(
                     center=rect.center
                 )
             )
@@ -2336,6 +2452,7 @@ def title_screen():
                     return "start"
 
                 if event.key == pygame.K_F2:
+
                     return "instructions"
 
                 if event.key == pygame.K_F3:
@@ -2347,6 +2464,7 @@ def title_screen():
                     )
 
                 if event.key == pygame.K_F4:
+
                     return "scores"
 
                 if event.key == pygame.K_F10:
@@ -2384,12 +2502,6 @@ def title_screen():
 
                             else:
 
-                                if action == "start":
-
-                                    play_sound(
-                                        start_sound
-                                    )
-
                                 return action
 
 
@@ -2416,63 +2528,40 @@ def instructions_screen():
             title.get_rect(
                 center=(
                     WIDTH // 2,
-                    90
+                    100
                 )
             )
         )
 
         lines = [
-
             "ARROW KEYS       Move the player",
-
             "",
-
-            "SPACE            Jump",
-
-            "ARROW + SPACE    Jump in that direction",
-
-            "                  Jump travels TWO squares",
-
+            "HOLD ARROW       Continue moving",
             "",
-
-            "Hold an arrow key and press SPACE",
-
-            "to jump over the adjacent square.",
-
+            "SPACE + ARROW    Jump two squares",
+            "                  over the adjacent square",
             "",
-
-            "H                 Toggle top-down map",
-
-            "                  Map is OFF by default.",
-
+            "SPACE            Hold to request a jump",
             "",
-
-            "BLUE              Water",
-
-            "BROWN             Sand",
-
-            "BLACK             Pit",
-
+            "H                 Toggle the top-down map",
+            "                  (off by default)",
             "",
-
-            "Landing in a hazard costs a life.",
-
+            "Avoid the hazards:",
+            "  BLUE            Water",
+            "  BROWN           Sand",
+            "  BLACK           Pit",
+            "",
+            "A hazard costs one life.",
             "You return to the beginning of the level.",
-
             "",
-
             "You have THREE lives.",
-
             "",
-
             "Reach the red exit to complete the level.",
-
             "",
-
-            "ESC               Return to title"
+            "ESC               Return to the title screen"
         ]
 
-        y = 160
+        y = 170
 
         for line in lines:
 
@@ -2485,13 +2574,30 @@ def instructions_screen():
             screen.blit(
                 surface,
                 (
-                    WIDTH // 2 -
+                    WIDTH // 2
+                    -
                     surface.get_width() // 2,
                     y
                 )
             )
 
             y += 32
+
+        back = FONT.render(
+            "Press ESC to return",
+            True,
+            (150, 160, 170)
+        )
+
+        screen.blit(
+            back,
+            back.get_rect(
+                center=(
+                    WIDTH // 2,
+                    HEIGHT - 50
+                )
+            )
+        )
 
         pygame.display.flip()
 
@@ -2539,14 +2645,7 @@ def high_scores_screen():
             )
         )
 
-        sorted_scores = sorted(
-            high_scores,
-            key=lambda x:
-                x.get("score", 0),
-            reverse=True
-        )
-
-        if not sorted_scores:
+        if not high_scores:
 
             text = FONT_MEDIUM.render(
                 "No scores recorded yet.",
@@ -2565,6 +2664,16 @@ def high_scores_screen():
             )
 
         else:
+
+            sorted_scores = sorted(
+                high_scores,
+                key=lambda x:
+                    x.get(
+                        "score",
+                        0
+                    ),
+                reverse=True
+            )
 
             for i, entry in enumerate(
                 sorted_scores[:10]
@@ -2906,114 +3015,6 @@ def game_over_screen(score):
 
 
 # ============================================================
-# DIRECTION
-# ============================================================
-
-def get_direction_from_keys():
-
-    keys = pygame.key.get_pressed()
-
-    if keys[pygame.K_LEFT]:
-        return (-1, 0)
-
-    if keys[pygame.K_RIGHT]:
-        return (1, 0)
-
-    if keys[pygame.K_UP]:
-        return (0, -1)
-
-    if keys[pygame.K_DOWN]:
-        return (0, 1)
-
-    return None
-
-
-# ============================================================
-# JUMP VALIDATION
-# ============================================================
-
-def get_jump(
-    maze,
-    x,
-    y,
-    dx,
-    dy
-):
-
-    middle = (
-        x + dx,
-        y + dy
-    )
-
-    landing = (
-        x + dx * 2,
-        y + dy * 2
-    )
-
-    # Both squares must physically exist.
-    #
-    # The middle square is the obstacle being
-    # jumped over. It must be floor.
-    #
-    # The landing square must also be floor.
-    if not is_floor(
-        maze,
-        middle[0],
-        middle[1]
-    ):
-
-        return None
-
-    if not is_floor(
-        maze,
-        landing[0],
-        landing[1]
-    ):
-
-        return None
-
-    return (
-        middle,
-        landing
-    )
-
-
-# ============================================================
-# START JUMP
-# ============================================================
-
-def begin_jump(
-    maze,
-    player_x,
-    player_y,
-    direction
-):
-
-    if direction is None:
-        return None
-
-    dx, dy = direction
-
-    result = get_jump(
-        maze,
-        player_x,
-        player_y,
-        dx,
-        dy
-    )
-
-    if result is None:
-        return None
-
-    middle, landing = result
-
-    return (
-        middle,
-        landing
-    )
-
-
-# ============================================================
 # GAME LOOP
 # ============================================================
 
@@ -3051,12 +3052,20 @@ def play_game():
             player_y
         )
 
+        # ----------------------------------------------------
+        # Movement state
+        # ----------------------------------------------------
+
         moving = False
 
         move_progress = 0.0
 
         move_start = start
         move_target = start
+
+        # ----------------------------------------------------
+        # Jump state
+        # ----------------------------------------------------
 
         jumping = False
 
@@ -3067,9 +3076,26 @@ def play_game():
 
         jump_height = 0.0
 
-        dying = False
+        # Persistent jump request.
+        jump_requested = False
 
+        # Current direction.
+        current_dx = 0
+        current_dy = 0
+
+        facing = (0, 1)
+
+        # ----------------------------------------------------
+        # Death
+        # ----------------------------------------------------
+
+        dying = False
         death_amount = 0.0
+        death_kind = None
+
+        # ----------------------------------------------------
+        # Statistics
+        # ----------------------------------------------------
 
         moves = 0
 
@@ -3079,25 +3105,32 @@ def play_game():
 
         level_complete = False
 
-        # Remember the last direction.
-        # This makes SPACE usable even when
-        # the player isn't physically holding
-        # an arrow key at that exact instant.
-        last_direction = (0, 1)
-
         running = True
+
+        # ----------------------------------------------------
+        # KEY REPEAT CONTROL
+        # ----------------------------------------------------
+
+        # Time before held-key movement starts repeating.
+        key_repeat_delay = 0.08
+
+        movement_timer = 0.0
+
+        # ----------------------------------------------------
+        # MAIN LEVEL LOOP
+        # ----------------------------------------------------
 
         while running:
 
-            dt = (
-                clock.tick(FPS)
-                / 1000.0
-            )
+            dt = clock.tick(
+                FPS
+            ) / 1000.0
 
             now = time.time()
 
             elapsed = (
-                now -
+                now
+                -
                 level_start_time
             )
 
@@ -3112,10 +3145,6 @@ def play_game():
                     pygame.quit()
                     sys.exit()
 
-                # --------------------------------------------
-                # KEYBOARD
-                # --------------------------------------------
-
                 if event.type == pygame.KEYDOWN:
 
                     if event.key == pygame.K_ESCAPE:
@@ -3126,175 +3155,238 @@ def play_game():
 
                         show_map = not show_map
 
-                        continue
-
-                    # ----------------------------------------
-                    # SPACE = JUMP
-                    #
-                    # This is deliberately independent of
-                    # the arrow KEYDOWN event.
-                    # ----------------------------------------
-
+                    # Space now sets a persistent jump request.
                     if event.key == pygame.K_SPACE:
 
-                        if (
-                            not moving
-                            and
-                            not jumping
-                            and
-                            not dying
-                            and
-                            not level_complete
-                        ):
+                        jump_requested = True
 
-                            direction = (
-                                get_direction_from_keys()
-                                or
-                                last_direction
-                            )
-
-                            result = begin_jump(
-                                maze,
-                                player_x,
-                                player_y,
-                                direction
-                            )
-
-                            if result:
-
-                                middle, landing = result
-
-                                jump_start = (
-                                    player_x,
-                                    player_y
-                                )
-
-                                jump_end = landing
-
-                                jump_progress = 0.0
-
-                                jumping = True
-
-                                moves += 1
-
-                                play_sound(
-                                    jump_sound
-                                )
-
-                        continue
-
-                    # ----------------------------------------
-                    # ARROWS
-                    # ----------------------------------------
-
+                    # Arrow key gives direction immediately.
                     if event.key == pygame.K_LEFT:
 
-                        last_direction = (
-                            -1,
-                            0
-                        )
+                        current_dx = -1
+                        current_dy = 0
+                        facing = (-1, 0)
 
                     elif event.key == pygame.K_RIGHT:
 
-                        last_direction = (
-                            1,
-                            0
-                        )
+                        current_dx = 1
+                        current_dy = 0
+                        facing = (1, 0)
 
                     elif event.key == pygame.K_UP:
 
-                        last_direction = (
-                            0,
-                            -1
-                        )
+                        current_dx = 0
+                        current_dy = -1
+                        facing = (0, -1)
 
                     elif event.key == pygame.K_DOWN:
 
-                        last_direction = (
-                            0,
-                            1
-                        )
+                        current_dx = 0
+                        current_dy = 1
+                        facing = (0, 1)
 
-                    else:
+                if event.type == pygame.KEYUP:
 
-                        continue
+                    if event.key == pygame.K_SPACE:
 
-                    # Don't start ordinary movement while
-                    # another animation is running.
-                    if (
-                        moving
-                        or
-                        jumping
-                        or
-                        dying
-                    ):
+                        jump_requested = False
 
-                        continue
-
-                    dx, dy = last_direction
-
-                    nx = (
-                        player_x + dx
-                    )
-
-                    ny = (
-                        player_y + dy
-                    )
-
-                    if is_floor(
-                        maze,
-                        nx,
-                        ny
-                    ):
-
-                        move_start = (
-                            player_x,
-                            player_y
-                        )
-
-                        move_target = (
-                            nx,
-                            ny
-                        )
-
-                        move_progress = 0.0
-
-                        moving = True
-
-                        moves += 1
-
-                        play_sound(
-                            move_sound
-                        )
-
-                # --------------------------------------------
-                # MOUSE
-                # --------------------------------------------
+                # ------------------------------------------------
+                # MOUSE GIVE UP
+                # ------------------------------------------------
 
                 if (
-                    event.type ==
+                    event.type
+                    ==
                     pygame.MOUSEBUTTONDOWN
                 ):
 
                     if event.button == 1:
 
-                        if get_give_up_rect().collidepoint(
+                        give_up_rect = pygame.Rect(
+                            WIDTH - 180,
+                            HEIGHT - 60,
+                            150,
+                            40
+                        )
+
+                        if give_up_rect.collidepoint(
                             event.pos
                         ):
 
-                            return {
-                                "result": "giveup",
-                                "score": total_score
-                            }
+                            return "giveup"
 
             # ------------------------------------------------
-            # NORMAL MOVEMENT
+            # CURRENT HELD KEYS
+            # ------------------------------------------------
+
+            keys = pygame.key.get_pressed()
+
+            left = keys[
+                pygame.K_LEFT
+            ]
+
+            right = keys[
+                pygame.K_RIGHT
+            ]
+
+            up = keys[
+                pygame.K_UP
+            ]
+
+            down = keys[
+                pygame.K_DOWN
+            ]
+
+            # Latest held arrow takes priority.
+            if left:
+
+                current_dx = -1
+                current_dy = 0
+                facing = (-1, 0)
+
+            elif right:
+
+                current_dx = 1
+                current_dy = 0
+                facing = (1, 0)
+
+            elif up:
+
+                current_dx = 0
+                current_dy = -1
+                facing = (0, -1)
+
+            elif down:
+
+                current_dx = 0
+                current_dy = 1
+                facing = (0, 1)
+
+            # ------------------------------------------------
+            # MOVEMENT / JUMP START
+            # ------------------------------------------------
+
+            if (
+                not moving
+                and
+                not jumping
+                and
+                not dying
+                and
+                not level_complete
+            ):
+
+                movement_timer += dt
+
+                # Space + direction.
+                if (
+                    jump_requested
+                    and
+                    (
+                        current_dx != 0
+                        or
+                        current_dy != 0
+                    )
+                ):
+
+                    result = get_jump_destination(
+                        maze,
+                        player_x,
+                        player_y,
+                        current_dx,
+                        current_dy
+                    )
+
+                    if result is not None:
+
+                        obstacle_pos, landing = result
+
+                        # Do not jump onto another obstacle.
+                        if landing not in obstacles:
+
+                            jump_start = (
+                                player_x,
+                                player_y
+                            )
+
+                            jump_end = landing
+
+                            jump_progress = 0.0
+
+                            jump_height = 0.0
+
+                            jumping = True
+
+                            moves += 1
+
+                            play_sound(
+                                jump_sound
+                            )
+
+                            # Consume the jump request.
+                            jump_requested = False
+
+                            movement_timer = 0.0
+
+                # ------------------------------------------------
+                # NORMAL MOVEMENT
+                # ------------------------------------------------
+
+                elif (
+                    current_dx != 0
+                    or
+                    current_dy != 0
+                ):
+
+                    if movement_timer >= key_repeat_delay:
+
+                        nx = (
+                            player_x
+                            + current_dx
+                        )
+
+                        ny = (
+                            player_y
+                            + current_dy
+                        )
+
+                        if is_floor(
+                            maze,
+                            nx,
+                            ny
+                        ):
+
+                            move_start = (
+                                player_x,
+                                player_y
+                            )
+
+                            move_target = (
+                                nx,
+                                ny
+                            )
+
+                            move_progress = 0.0
+
+                            moving = True
+
+                            moves += 1
+
+                            movement_timer = 0.0
+
+                            play_sound(
+                                move_sound
+                            )
+
+            # ------------------------------------------------
+            # WALK ANIMATION
             # ------------------------------------------------
 
             if moving:
 
                 move_progress += (
-                    dt * 5.5
+                    dt * 6.0
                 )
 
                 if move_progress >= 1.0:
@@ -3315,7 +3407,9 @@ def play_game():
 
                     moving = False
 
-                    # Reached exit.
+                    movement_timer = 0.0
+
+                    # Exit.
                     if (
                         player_x,
                         player_y
@@ -3323,11 +3417,18 @@ def play_game():
 
                         level_complete = True
 
-                    # Walked into hazard.
+                    # Hazard.
                     elif (
                         player_x,
                         player_y
                     ) in obstacles:
+
+                        death_kind = obstacles[
+                            (
+                                player_x,
+                                player_y
+                            )
+                        ]
 
                         dying = True
 
@@ -3342,8 +3443,15 @@ def play_game():
                     t = move_progress
 
                     smooth = (
-                        t * t *
-                        (3 - 2 * t)
+                        t
+                        *
+                        t
+                        *
+                        (
+                            3
+                            -
+                            2 * t
+                        )
                     )
 
                     visual_x = (
@@ -3353,8 +3461,8 @@ def play_game():
                             move_target[0]
                             -
                             move_start[0]
-                        ) *
-                        smooth
+                        )
+                        * smooth
                     )
 
                     visual_y = (
@@ -3364,20 +3472,19 @@ def play_game():
                             move_target[1]
                             -
                             move_start[1]
-                        ) *
-                        smooth
+                        )
+                        * smooth
                     )
 
             # ------------------------------------------------
-            # JUMP
+            # JUMP ANIMATION
             # ------------------------------------------------
 
             if jumping:
 
-                # A complete jump takes approximately
-                # the same time as traversing two blocks.
+                # Fixed duration for a complete two-square jump.
                 jump_progress += (
-                    dt * 2.15
+                    dt * 2.35
                 )
 
                 if jump_progress >= 1.0:
@@ -3400,6 +3507,8 @@ def play_game():
 
                     jump_height = 0.0
 
+                    movement_timer = 0.0
+
                     # Landing on exit.
                     if (
                         player_x,
@@ -3408,16 +3517,18 @@ def play_game():
 
                         level_complete = True
 
-                    # IMPORTANT:
-                    #
-                    # Only the LANDING square is tested.
-                    #
-                    # The obstacle in the middle square
-                    # has been successfully jumped over.
+                    # Safety check.
                     elif (
                         player_x,
                         player_y
                     ) in obstacles:
+
+                        death_kind = obstacles[
+                            (
+                                player_x,
+                                player_y
+                            )
+                        ]
 
                         dying = True
 
@@ -3431,9 +3542,17 @@ def play_game():
 
                     t = jump_progress
 
+                    # Smooth horizontal interpolation.
                     smooth = (
-                        t * t *
-                        (3 - 2 * t)
+                        t
+                        *
+                        t
+                        *
+                        (
+                            3
+                            -
+                            2 * t
+                        )
                     )
 
                     visual_x = (
@@ -3443,8 +3562,8 @@ def play_game():
                             jump_end[0]
                             -
                             jump_start[0]
-                        ) *
-                        smooth
+                        )
+                        * smooth
                     )
 
                     visual_y = (
@@ -3454,15 +3573,13 @@ def play_game():
                             jump_end[1]
                             -
                             jump_start[1]
-                        ) *
-                        smooth
+                        )
+                        * smooth
                     )
 
-                    # Full parabolic arc.
-                    jump_height = (
-                        math.sin(
-                            math.pi * t
-                        )
+                    # True arc.
+                    jump_height = math.sin(
+                        math.pi * t
                     )
 
             # ------------------------------------------------
@@ -3475,8 +3592,10 @@ def play_game():
                     dt * 1.5
                 )
 
+                # Player sinks down into hazard.
                 jump_height = (
-                    -death_amount * 0.8
+                    -death_amount
+                    * 0.55
                 )
 
                 if death_amount >= 1.0:
@@ -3489,16 +3608,11 @@ def play_game():
                             total_score
                         )
 
-                        return {
-                            "result":
-                                "gameover",
-                            "score":
-                                total_score
-                        }
+                        return "gameover"
 
-                    # ----------------------------------------
-                    # RESET TO LEVEL START
-                    # ----------------------------------------
+                    # ------------------------------------------------
+                    # RETURN TO START OF LEVEL
+                    # ------------------------------------------------
 
                     player_x, player_y = start
 
@@ -3519,8 +3633,15 @@ def play_game():
                     jump_height = 0.0
 
                     dying = False
-
                     death_amount = 0.0
+                    death_kind = None
+
+                    current_dx = 0
+                    current_dy = 0
+
+                    movement_timer = 0.0
+
+                    jump_requested = False
 
             # ------------------------------------------------
             # LEVEL COMPLETE
@@ -3532,23 +3653,27 @@ def play_game():
                     exit_sound
                 )
 
-                time_bonus = max(
+                level_time_bonus = max(
                     0,
                     int(
-                        1000 -
+                        1000
+                        -
                         elapsed * 10
                     )
                 )
 
                 move_bonus = max(
                     0,
-                    1000 -
+                    1000
+                    -
                     moves * 10
                 )
 
                 level_score = (
-                    1000 +
-                    time_bonus +
+                    1000
+                    +
+                    level_time_bonus
+                    +
                     move_bonus
                 )
 
@@ -3594,22 +3719,6 @@ def play_game():
                     )
                 )
 
-                total = FONT_MEDIUM.render(
-                    f"Total Score: {total_score}",
-                    True,
-                    YELLOW
-                )
-
-                screen.blit(
-                    total,
-                    total.get_rect(
-                        center=(
-                            WIDTH // 2,
-                            HEIGHT // 2 + 70
-                        )
-                    )
-                )
-
                 pygame.display.flip()
 
                 pygame.time.wait(
@@ -3635,7 +3744,8 @@ def play_game():
                 move_progress,
                 show_map,
                 death_amount,
-                now
+                now,
+                facing
             )
 
             draw_hud(
@@ -3646,21 +3756,64 @@ def play_game():
                 total_score
             )
 
-            draw_give_up_button()
+            # ------------------------------------------------
+            # GIVE UP BUTTON
+            # ------------------------------------------------
+
+            give_up_rect = pygame.Rect(
+                WIDTH - 180,
+                HEIGHT - 60,
+                150,
+                40
+            )
+
+            over = give_up_rect.collidepoint(
+                pygame.mouse.get_pos()
+            )
+
+            pygame.draw.rect(
+                screen,
+                (
+                    (80, 40, 45)
+                    if over
+                    else
+                    (55, 30, 35)
+                ),
+                give_up_rect,
+                border_radius=8
+            )
+
+            pygame.draw.rect(
+                screen,
+                RED,
+                give_up_rect,
+                1,
+                border_radius=8
+            )
+
+            give_up_text = FONT_SMALL.render(
+                "GIVE UP",
+                True,
+                WHITE
+            )
+
+            screen.blit(
+                give_up_text,
+                give_up_text.get_rect(
+                    center=give_up_rect.center
+                )
+            )
 
             pygame.display.flip()
 
-    return {
-        "result": "quit",
-        "score": total_score
-    }
+    return None
 
 
 # ============================================================
 # SCORE PROCESSING
 # ============================================================
 
-def process_score(score):
+def process_score(score=0):
 
     global high_scores
 
@@ -3679,16 +3832,15 @@ def process_score(score):
         }
     )
 
-    high_scores.sort(
+    high_scores = sorted(
+        high_scores,
         key=lambda x:
             x.get(
                 "score",
                 0
             ),
         reverse=True
-    )
-
-    high_scores = high_scores[:20]
+    )[:20]
 
     save_scores(
         high_scores
@@ -3709,19 +3861,11 @@ def main():
 
             result = play_game()
 
-            if (
-                isinstance(result, dict)
-                and
-                result.get("result")
-                == "giveup"
-            ):
+            if result == "giveup":
 
-                process_score(
-                    result.get(
-                        "score",
-                        0
-                    )
-                )
+                # The current implementation records the
+                # current accumulated score.
+                process_score(0)
 
         elif action == "instructions":
 
